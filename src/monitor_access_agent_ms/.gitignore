@@ -1,0 +1,52 @@
+# Archivos de sistema
+.DS_Store
+*.swp
+*.*~
+*.pyc
+ 
+# Archivos de usuario específicos
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+project.lock.json
+ 
+# Resultados de compilación
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+build/
+bld/
+msbuild.log
+msbuild.err
+msbuild.wrn
+publish/
+out/
+
+# Ignorar carpeta Context del DbContext
+src/seguridades-ms/Infrastructure/Persistence/Context/
+
+# Ignorar carpeta Entities del dominio
+# Domain/Entities/
+
+ 
+# Archivos temporales de Visual Studio y JetBrains
+.vs/
+.vscode/
+*.vsidx
+*.vshx
+*.db
+*.db-shm
+*.db-wal
+ 
+# Archivos de configuración sensibles
+.env
+
+# Ignorar carpeta Context del DbContext
+src/seguridades-ms/Infrastructure/Persistence/Context/
+ 
