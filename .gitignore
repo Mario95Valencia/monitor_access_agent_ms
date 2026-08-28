@@ -1,2 +1,7 @@
 .vscode/
 .vs/
+bin/
+obj/
+.env
+*.mdb
+*.accdb

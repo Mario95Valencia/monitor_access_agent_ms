@@ -1,92 +1,38 @@
 using DotNetEnv;
-using monitor_access_agent_ms.Domain.Interfaces;
-using monitor_access_agent_ms.Infrastructure.Persistence.Context;
-using monitor_access_agent_ms.Infrastructure.Repositories;
-using monitor_access_agent_ms.libs;
-using MicroservicesTemplate.Domain.Repositories;
-using MicroservicesTemplate.Infrastructure.Repositories;
-using Microsoft.EntityFrameworkCore;
-using System.Reflection;
+using Microsoft.Extensions.Options;
+using monitor_access_agent_ms;
+using monitor_access_agent_ms.Configuration;
+using monitor_access_agent_ms.Services;
 
-var builder = WebApplication.CreateBuilder(args);
+var envPath = Path.Combine(AppContext.BaseDirectory, ".env");
+if (File.Exists(envPath))
+    Env.Load(envPath);
 
-// Cargar variables del .env
-Env.Load();
+var builder = Host.CreateApplicationBuilder(args);
 
-// Obtener cadena de conexión
-var connectionString = EnvironmentConfiguration.GetConnectionString();
-
-// Agregar DbContext con cadena de conexión
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(connectionString));
-builder.Services.AddGapInfrastructure<ApplicationDbContext>();
-
-//Este comando ensambla todos los queries, commands y handlers de mi capa de aplicacion
-builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
-
-//Configuracion de cors para poder permitir el acceso desde el frontend
-builder.Services.AddCors(options =>
+builder.Services.AddWindowsService(options =>
 {
-    options.AddPolicy("AllowAngularDev",
-        policy => policy.WithOrigins("http://localhost:4200")  // URL de tu frontend
-                        .AllowAnyHeader()
-                        .AllowAnyMethod());
+    options.ServiceName = "GAP Monitor Access Agent";
 });
 
-// Configuración estándar
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
+builder.Services
+    .AddOptions<MonitorAgentOptions>()
+    .Bind(builder.Configuration.GetSection(MonitorAgentOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(options => options.TieneFuentesValidas(),
+        "Monitor:FuentesAccess debe contener al menos una fuente con ruta y puntos válidos; " +
+        "cada serie debe tener seis dígitos y cada caja tres.")
+    .ValidateOnStart();
 
-// Configuración genérica de Swagger
-var projectName = Assembly.GetExecutingAssembly().GetName().Name ?? "API";
-var apiTitle = $"{projectName} API";
-var apiVersion = "v1";
-
-builder.Services.AddSwaggerGen(c =>
+builder.Services.AddSingleton<IAccessNotaReader, AccessNotaReader>();
+builder.Services.AddHttpClient<IMonitorApiClient, MonitorApiClient>((serviceProvider, client) =>
 {
-    c.SwaggerDoc(apiVersion, new Microsoft.OpenApi.Models.OpenApiInfo
-    {
-        Title = apiTitle,
-        Version = apiVersion,
-        Description = $"API documentation for {projectName}",
-        Contact = new Microsoft.OpenApi.Models.OpenApiContact
-        {
-            Name = "Development Team",
-            Email = "www.gapsystem.net"
-        }
-    });
-
-    // Incluir comentarios XML si existen
-    var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
-    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
-    if (File.Exists(xmlPath))
-    {
-        c.IncludeXmlComments(xmlPath);
-    }
+    var options = serviceProvider.GetRequiredService<IOptions<MonitorAgentOptions>>().Value;
+    client.BaseAddress = new Uri(options.ApiUrl);
+    client.Timeout = TimeSpan.FromSeconds(options.HttpTimeoutSeconds);
 });
+builder.Services.AddSingleton(new AgentRuntimeOptions(
+    args.Any(x => string.Equals(x, "--once", StringComparison.OrdinalIgnoreCase))));
+builder.Services.AddHostedService<Worker>();
 
-var app = builder.Build();
-
-// Aplicar el Path Base desde el .env
-var apiRootPath = EnvironmentConfiguration.GetApiRootPath();
-if (!string.IsNullOrEmpty(apiRootPath))
-{
-    app.UsePathBase(apiRootPath);
-}
-
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint($"{apiRootPath}/swagger/{apiVersion}/swagger.json", $"{apiTitle} {apiVersion.ToUpper()}");
-        c.RoutePrefix = "swagger";
-        c.DocumentTitle = $"{apiTitle} - API Documentation";
-    });
-}
-
-
-// Middleware y endpoints
-app.UseAuthorization();
-app.MapControllers();
-app.Run();
+await builder.Build().RunAsync();
