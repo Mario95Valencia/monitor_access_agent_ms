@@ -84,7 +84,7 @@ public sealed class Worker(
         if (resultado.Nota is not null)
         {
             var nota = resultado.Nota;
-            request = new HeartbeatRequest(punto.CodigoPunto, punto.Serie, nota.Secuencial,
+            request = new HeartbeatRequest(punto.CodigoPunto, punto.IdEmisor, punto.Serie, nota.Secuencial,
                 nota.NumeroDocumento, nota.FechaDocumento, true, _options.VersionAgente, null);
             logger.LogInformation(
                 "Punto {Punto}: Access disponible. Documento {Documento}, secuencial {Secuencial}.",
@@ -94,7 +94,7 @@ public sealed class Worker(
         {
             var error = resultado.Error ?? new InvalidOperationException("Error de lectura no especificado.");
             logger.LogError(error, "Punto {Punto}: no fue posible consultar Access.", punto.CodigoPunto);
-            request = new HeartbeatRequest(punto.CodigoPunto, punto.Serie, null, null, null,
+            request = new HeartbeatRequest(punto.CodigoPunto, punto.IdEmisor, punto.Serie, null, null, null,
                 false, _options.VersionAgente, LimitarError(error.Message));
         }
 

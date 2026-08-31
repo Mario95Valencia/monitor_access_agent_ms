@@ -18,6 +18,7 @@ public sealed class MonitorAgentOptions
             fuente.Puntos.Count > 0 &&
             fuente.Puntos.All(punto =>
                 !string.IsNullOrWhiteSpace(punto.CodigoPunto) &&
+                punto.IdEmisor > 0 &&
                 punto.Serie.Length == 6 && punto.Serie.All(char.IsDigit) &&
                 punto.Caja.Length == 3 && punto.Caja.All(char.IsDigit)));
 }
@@ -32,6 +33,7 @@ public sealed class FuenteAccessOptions
 public sealed class PuntoOptions
 {
     [Required] public string CodigoPunto { get; init; } = string.Empty;
+    [Range(1, long.MaxValue)] public long IdEmisor { get; init; }
     [Required] public string Serie { get; init; } = string.Empty;
     [Required] public string Caja { get; init; } = string.Empty;
     public string ApiKey { get; init; } = string.Empty;
