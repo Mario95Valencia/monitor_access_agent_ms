@@ -7,51 +7,145 @@ namespace monitor_access_agent_ms.Services;
 
 public sealed class AccessNotaReader : IAccessNotaReader
 {
+    private static readonly string[] Providers =
+    [
+        "Microsoft.ACE.OLEDB.16.0",
+        "Microsoft.ACE.OLEDB.12.0",
+        "Microsoft.Jet.OLEDB.4.0"
+    ];
+
     public async Task<IReadOnlyList<ResultadoLecturaPunto>> ObtenerUltimasNotasAsync(
         FuenteAccessOptions fuente,
         CancellationToken cancellationToken)
     {
-        if (!File.Exists(fuente.AccessPath))
-            throw new FileNotFoundException("No se encontró la base Access configurada.", fuente.AccessPath);
+        var resultados = await ConsultarBaseAsync(
+            fuente.AccessPath, fuente.AccessPassword, fuente.Tabla, fuente.Puntos, cancellationToken);
 
-        var connectionString = new OleDbConnectionStringBuilder
+        if (string.IsNullOrWhiteSpace(fuente.FallbackAccessPath))
+            return resultados;
+
+        var alternativos = await ConsultarBaseAsync(
+            fuente.FallbackAccessPath, fuente.FallbackAccessPassword, fuente.FallbackTabla,
+            fuente.Puntos, cancellationToken);
+        var alternativoPorPunto = alternativos.ToDictionary(x => x.Punto);
+
+        return resultados.Select(resultado =>
         {
-            Provider = "Microsoft.ACE.OLEDB.16.0",
-            DataSource = fuente.AccessPath
-        };
-        if (!string.IsNullOrWhiteSpace(fuente.AccessPassword))
-            connectionString["Jet OLEDB:Database Password"] = fuente.AccessPassword;
-        connectionString["Mode"] = "Share Deny None";
+            var alternativo = alternativoPorPunto[resultado.Punto];
+            ResultadoLecturaPunto seleccionado;
+            if (resultado.Nota is not null && alternativo.Nota is not null)
+                seleccionado = resultado.Nota.Secuencial >= alternativo.Nota.Secuencial
+                    ? resultado
+                    : alternativo;
+            else if (resultado.Nota is not null)
+                seleccionado = resultado;
+            else if (alternativo.Nota is not null)
+                seleccionado = alternativo;
+            else
+                return new ResultadoLecturaPunto(resultado.Punto, null, new AggregateException(
+                    "El punto no se encontró en NotaDiaria ni en Nota.",
+                    resultado.Error!, alternativo.Error!));
 
-        await using var connection = new OleDbConnection(connectionString.ConnectionString);
-        await connection.OpenAsync(cancellationToken);
+            var errorNota = fuente.Tabla == "Nota"
+                ? resultado.Error
+                : fuente.FallbackTabla == "Nota"
+                    ? alternativo.Error
+                    : null;
 
-        var resultados = new List<ResultadoLecturaPunto>(fuente.Puntos.Count);
-        foreach (var punto in fuente.Puntos)
+            return errorNota is null
+                ? seleccionado
+                : new ResultadoLecturaPunto(resultado.Punto, seleccionado.Nota,
+                    new InvalidOperationException(
+                        "Falló la consulta de la base crítica con tabla Nota.", errorNota));
+        }).ToArray();
+    }
+
+    private static async Task<IReadOnlyList<ResultadoLecturaPunto>> ConsultarBaseAsync(
+        string accessPath,
+        string accessPassword,
+        string tabla,
+        IReadOnlyCollection<PuntoOptions> puntos,
+        CancellationToken cancellationToken)
+    {
+        try
         {
+            if (!File.Exists(accessPath))
+                throw new FileNotFoundException("No se encontró la base Access configurada.", accessPath);
+
+            await using var connection = await AbrirConexionAsync(accessPath, accessPassword, cancellationToken);
+            var resultados = new List<ResultadoLecturaPunto>(puntos.Count);
+            foreach (var punto in puntos)
+            {
+                try
+                {
+                    var nota = await ObtenerUltimaNotaAsync(connection, punto, tabla, cancellationToken);
+                    resultados.Add(new ResultadoLecturaPunto(punto, nota, null));
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    resultados.Add(new ResultadoLecturaPunto(punto, null, exception));
+                }
+            }
+            return resultados;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return puntos.Select(punto => new ResultadoLecturaPunto(punto, null, exception)).ToArray();
+        }
+    }
+
+    private static async Task<OleDbConnection> AbrirConexionAsync(
+        string accessPath,
+        string accessPassword,
+        CancellationToken cancellationToken)
+    {
+        var errores = new List<Exception>();
+        foreach (var provider in Providers)
+        {
+            var connectionString = new OleDbConnectionStringBuilder
+            {
+                Provider = provider,
+                DataSource = accessPath
+            };
+            if (!string.IsNullOrWhiteSpace(accessPassword))
+                connectionString["Jet OLEDB:Database Password"] = accessPassword;
+            connectionString["Mode"] = "Share Deny None";
+
+            var connection = new OleDbConnection(connectionString.ConnectionString);
             try
             {
-                var nota = await ObtenerUltimaNotaAsync(connection, punto, cancellationToken);
-                resultados.Add(new ResultadoLecturaPunto(punto, nota, null));
+                await connection.OpenAsync(cancellationToken);
+                return connection;
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (InvalidOperationException exception)
             {
-                resultados.Add(new ResultadoLecturaPunto(punto, null, exception));
+                errores.Add(exception);
+                await connection.DisposeAsync();
             }
         }
 
-        return resultados;
+        throw new InvalidOperationException(
+            "No hay un proveedor compatible de Access registrado. " +
+            $"Se intentaron: {string.Join(", ", Providers)}.",
+            new AggregateException(errores));
     }
 
     private static async Task<UltimaNota> ObtenerUltimaNotaAsync(
         OleDbConnection connection,
         PuntoOptions punto,
+        string tabla,
         CancellationToken cancellationToken)
     {
+        var tablaValidada = tabla switch
+        {
+            "Nota" => "Nota",
+            "NotaDiaria" => "NotaDiaria",
+            _ => throw new InvalidOperationException($"La tabla Access '{tabla}' no está permitida.")
+        };
 
-        const string sql = """
+        var sql = $"""
             SELECT TOP 1 Trim(numfac), Trim(caja), fecha, hora
-            FROM Nota
+            FROM [{tablaValidada}]
             WHERE Trim(caja) = ?
               AND tipdoc = ?
               AND Len(Trim(numfac)) = 10
@@ -60,14 +154,14 @@ public sealed class AccessNotaReader : IAccessNotaReader
             """;
 
         await using var command = new OleDbCommand(sql, connection);
-        // En OleDb los parámetros son posicionales, independientemente de su nombre.
         command.Parameters.Add("@caja", OleDbType.VarWChar, 3).Value = punto.Caja;
         command.Parameters.Add("@tipdoc", OleDbType.SmallInt).Value = 3;
         command.Parameters.Add("@prefijo", OleDbType.VarWChar, 3).Value = punto.Caja;
 
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
         if (reader is null || !await reader.ReadAsync(cancellationToken))
-            throw new InvalidOperationException($"No se encontraron notas válidas para la caja {punto.Caja}.");
+            throw new InvalidOperationException(
+                $"No se encontraron notas válidas para la caja {punto.Caja} en {tablaValidada}.");
 
         var numeroDocumento = reader.GetString(0).Trim();
         if (!TryObtenerSecuencial(numeroDocumento, punto.Caja, out var secuencial))

@@ -15,6 +15,9 @@ public sealed class MonitorAgentOptions
         FuentesAccess.Count > 0 &&
         FuentesAccess.All(fuente =>
             !string.IsNullOrWhiteSpace(fuente.AccessPath) &&
+            fuente.Tabla is "Nota" or "NotaDiaria" &&
+            (string.IsNullOrWhiteSpace(fuente.FallbackAccessPath) ||
+             fuente.FallbackTabla is "Nota" or "NotaDiaria") &&
             fuente.Puntos.Count > 0 &&
             fuente.Puntos.All(punto =>
                 !string.IsNullOrWhiteSpace(punto.CodigoPunto) &&
@@ -27,6 +30,10 @@ public sealed class FuenteAccessOptions
 {
     [Required] public string AccessPath { get; init; } = string.Empty;
     public string AccessPassword { get; init; } = string.Empty;
+    public string Tabla { get; init; } = "Nota";
+    public string FallbackAccessPath { get; init; } = string.Empty;
+    public string FallbackAccessPassword { get; init; } = string.Empty;
+    public string FallbackTabla { get; init; } = "NotaDiaria";
     public List<PuntoOptions> Puntos { get; init; } = [];
 }
 

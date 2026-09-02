@@ -84,18 +84,25 @@ public sealed class Worker(
         if (resultado.Nota is not null)
         {
             var nota = resultado.Nota;
+            var accessDisponible = resultado.Error is null;
             request = new HeartbeatRequest(punto.CodigoPunto, punto.IdEmisor, punto.Serie, nota.Secuencial,
-                nota.NumeroDocumento, nota.FechaDocumento, true, _options.VersionAgente, null);
-            logger.LogInformation(
-                "Punto {Punto}: Access disponible. Documento {Documento}, secuencial {Secuencial}.",
-                punto.CodigoPunto, nota.NumeroDocumento, nota.Secuencial);
+                nota.NumeroDocumento, nota.FechaDocumento, accessDisponible, _options.VersionAgente,
+                resultado.Error is null ? null : DescribirError(resultado.Error));
+            if (accessDisponible)
+                logger.LogInformation(
+                    "Punto {Punto}: Access disponible. Documento {Documento}, secuencial {Secuencial}.",
+                    punto.CodigoPunto, nota.NumeroDocumento, nota.Secuencial);
+            else
+                logger.LogError(resultado.Error,
+                    "Punto {Punto}: se obtuvo el documento {Documento}, pero falló la base crítica Nota.",
+                    punto.CodigoPunto, nota.NumeroDocumento);
         }
         else
         {
             var error = resultado.Error ?? new InvalidOperationException("Error de lectura no especificado.");
             logger.LogError(error, "Punto {Punto}: no fue posible consultar Access.", punto.CodigoPunto);
             request = new HeartbeatRequest(punto.CodigoPunto, punto.IdEmisor, punto.Serie, null, null, null,
-                false, _options.VersionAgente, LimitarError(error.Message));
+                false, _options.VersionAgente, DescribirError(error));
         }
 
         try
@@ -112,4 +119,12 @@ public sealed class Worker(
     }
 
     private static string LimitarError(string value) => value.Length <= 1000 ? value : value[..1000];
+
+    private static string DescribirError(Exception exception)
+    {
+        var detalle = exception.InnerException is null
+            ? exception.Message
+            : $"{exception.Message} Detalle: {exception.GetBaseException().Message}";
+        return LimitarError(detalle);
+    }
 }
