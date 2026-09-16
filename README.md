@@ -15,6 +15,11 @@ El ejecutable se organiza en workers independientes:
 El backend no abre conexiones hacia las cajas. Tanto el monitoreo como el futuro
 reenvío iniciarán sus conexiones desde el agente.
 
+El cliente HTTP renueva periódicamente sus conexiones y realiza hasta tres
+intentos ante errores de red, timeout, `408`, `429` o respuestas `5xx`. Si el
+backend continúa detenido, el worker conserva su ejecución y vuelve a enviar en
+el siguiente ciclo; no es necesario reiniciar manualmente el servicio.
+
 ## Configuración local
 
 1. Copiar `src/monitor_access_agent_ms/.env.example` como

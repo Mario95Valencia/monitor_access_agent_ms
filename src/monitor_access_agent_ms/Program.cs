@@ -31,6 +31,14 @@ builder.Services.AddHttpClient<IMonitorApiClient, MonitorApiClient>((serviceProv
     var options = serviceProvider.GetRequiredService<IOptions<MonitorAgentOptions>>().Value;
     client.BaseAddress = new Uri(options.ApiUrl);
     client.Timeout = TimeSpan.FromSeconds(options.HttpTimeoutSeconds);
+})
+.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    // Evita conservar indefinidamente una conexión creada antes de que el
+    // backend se reinicie o cambie de dirección.
+    PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+    PooledConnectionIdleTimeout = TimeSpan.FromSeconds(45),
+    ConnectTimeout = TimeSpan.FromSeconds(10)
 });
 builder.Services.AddSingleton(new AgentRuntimeOptions(
     args.Any(x => string.Equals(x, "--once", StringComparison.OrdinalIgnoreCase))));
