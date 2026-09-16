@@ -5,18 +5,33 @@ using monitor_access_agent_ms.Services;
 
 namespace monitor_access_agent_ms;
 
-public sealed class Worker(
+/// <summary>
+/// Worker dedicado exclusivamente a consultar las fuentes Access y publicar
+/// el estado de monitoreo. No ejecuta ni atenderá órdenes de reenvío.
+/// </summary>
+public sealed class MonitorWorker(
     IAccessNotaReader accessReader,
     IMonitorApiClient apiClient,
     IOptions<MonitorAgentOptions> options,
     AgentRuntimeOptions runtimeOptions,
     IHostApplicationLifetime applicationLifetime,
-    ILogger<Worker> logger) : BackgroundService
+    ILogger<MonitorWorker> logger) : BackgroundService
 {
     private readonly MonitorAgentOptions _options = options.Value;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        foreach (var fuente in _options.FuentesAccess)
+        {
+            var pendientes = fuente.TiposDocumento
+                .Where(tipo => tipo != TiposDocumentoElectronico.Factura)
+                .ToArray();
+            if (pendientes.Length > 0)
+                logger.LogWarning(
+                    "Fuente {Fuente}: los tipos {Tipos} están configurados pero sus lectores aún no están habilitados.",
+                    DescribirFuente(fuente), string.Join(", ", pendientes));
+        }
+
         logger.LogInformation("Agente iniciado para {Punto}, caja {Caja}, serie {Serie}.",
             string.Join(", ", _options.FuentesAccess.SelectMany(x => x.Puntos).Select(x => x.CodigoPunto)),
             string.Join(", ", _options.FuentesAccess.SelectMany(x => x.Puntos).Select(x => x.Caja)),
@@ -24,7 +39,20 @@ public sealed class Worker(
 
         do
         {
-            await EjecutarCicloAsync(stoppingToken);
+            var inicio = DateTimeOffset.UtcNow;
+            try
+            {
+                await EjecutarCicloAsync(stoppingToken);
+                logger.LogInformation("Ciclo de monitoreo completado en {DuracionMs} ms.",
+                    (DateTimeOffset.UtcNow - inicio).TotalMilliseconds);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // Una falla no prevista en un ciclo no debe finalizar el servicio.
+                logger.LogError(exception,
+                    "El ciclo de monitoreo falló; se volverá a intentar en el siguiente intervalo.");
+            }
+
             if (runtimeOptions.RunOnce)
             {
                 applicationLifetime.StopApplication();
@@ -45,10 +73,12 @@ public sealed class Worker(
 
     private async Task EjecutarCicloAsync(CancellationToken cancellationToken)
     {
-        foreach (var fuente in _options.FuentesAccess)
-        {
-            await ProcesarFuenteAsync(fuente, cancellationToken);
-        }
+        // Las fuentes son independientes. Una ruta lenta o no disponible no
+        // debe impedir que las demás estaciones terminen su ciclo.
+        await Task.WhenAll(_options.FuentesAccess
+            .Where(fuente => fuente.Soporta(TiposDocumentoElectronico.Factura))
+            .Select(
+            fuente => ProcesarFuenteAsync(fuente, cancellationToken)));
     }
 
     private async Task ProcesarFuenteAsync(
@@ -119,6 +149,9 @@ public sealed class Worker(
     }
 
     private static string LimitarError(string value) => value.Length <= 1000 ? value : value[..1000];
+
+    private static string DescribirFuente(FuenteAccessOptions fuente) =>
+        string.IsNullOrWhiteSpace(fuente.Codigo) ? fuente.AccessPath : fuente.Codigo;
 
     private static string DescribirError(Exception exception)
     {

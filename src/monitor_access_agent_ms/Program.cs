@@ -21,7 +21,8 @@ builder.Services
     .ValidateDataAnnotations()
     .Validate(options => options.TieneFuentesValidas(),
         "Monitor:FuentesAccess debe contener al menos una fuente con ruta y puntos válidos; " +
-        "cada serie debe tener seis dígitos y cada caja tres.")
+        "cada serie debe tener seis dígitos, cada caja tres y al menos una fuente debe " +
+        "soportar factura (01).")
     .ValidateOnStart();
 
 builder.Services.AddSingleton<IAccessNotaReader, AccessNotaReader>();
@@ -33,6 +34,9 @@ builder.Services.AddHttpClient<IMonitorApiClient, MonitorApiClient>((serviceProv
 });
 builder.Services.AddSingleton(new AgentRuntimeOptions(
     args.Any(x => string.Equals(x, "--once", StringComparison.OrdinalIgnoreCase))));
-builder.Services.AddHostedService<Worker>();
+// El agente se organiza en workers independientes. Por ahora se habilita
+// solamente el monitoreo; ReenvioWorker se incorporará cuando su contrato
+// con el backend y el mecanismo de reenvío estén definidos.
+builder.Services.AddHostedService<MonitorWorker>();
 
 await builder.Build().RunAsync();

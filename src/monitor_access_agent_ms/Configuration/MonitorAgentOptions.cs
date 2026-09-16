@@ -15,6 +15,8 @@ public sealed class MonitorAgentOptions
         FuentesAccess.Count > 0 &&
         FuentesAccess.All(fuente =>
             !string.IsNullOrWhiteSpace(fuente.AccessPath) &&
+            fuente.TiposDocumento.Count > 0 &&
+            fuente.TiposDocumento.All(TiposDocumentoElectronico.EsTipoConocido) &&
             fuente.Tabla is "Nota" or "NotaDiaria" &&
             (string.IsNullOrWhiteSpace(fuente.FallbackAccessPath) ||
              fuente.FallbackTabla is "Nota" or "NotaDiaria") &&
@@ -23,18 +25,24 @@ public sealed class MonitorAgentOptions
                 !string.IsNullOrWhiteSpace(punto.CodigoPunto) &&
                 punto.IdEmisor > 0 &&
                 punto.Serie.Length == 6 && punto.Serie.All(char.IsDigit) &&
-                punto.Caja.Length == 3 && punto.Caja.All(char.IsDigit)));
+                punto.Caja.Length == 3 && punto.Caja.All(char.IsDigit))) &&
+        FuentesAccess.Any(fuente => fuente.Soporta(TiposDocumentoElectronico.Factura));
 }
 
 public sealed class FuenteAccessOptions
 {
+    public string Codigo { get; init; } = string.Empty;
     [Required] public string AccessPath { get; init; } = string.Empty;
     public string AccessPassword { get; init; } = string.Empty;
     public string Tabla { get; init; } = "Nota";
     public string FallbackAccessPath { get; init; } = string.Empty;
     public string FallbackAccessPassword { get; init; } = string.Empty;
     public string FallbackTabla { get; init; } = "NotaDiaria";
+    public List<string> TiposDocumento { get; init; } = [TiposDocumentoElectronico.Factura];
     public List<PuntoOptions> Puntos { get; init; } = [];
+
+    public bool Soporta(string tipoDocumento) =>
+        TiposDocumento.Contains(tipoDocumento, StringComparer.Ordinal);
 }
 
 public sealed class PuntoOptions
@@ -47,3 +55,25 @@ public sealed class PuntoOptions
 }
 
 public sealed record AgentRuntimeOptions(bool RunOnce);
+
+public static class TiposDocumentoElectronico
+{
+    public const string Factura = "01";
+    public const string LiquidacionCompra = "03";
+    public const string NotaCredito = "04";
+    public const string NotaDebito = "05";
+    public const string GuiaRemision = "06";
+    public const string Retencion = "07";
+
+    private static readonly HashSet<string> Conocidos =
+    [
+        Factura,
+        LiquidacionCompra,
+        NotaCredito,
+        NotaDebito,
+        GuiaRemision,
+        Retencion
+    ];
+
+    public static bool EsTipoConocido(string tipoDocumento) => Conocidos.Contains(tipoDocumento);
+}

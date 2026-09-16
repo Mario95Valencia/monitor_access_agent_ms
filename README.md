@@ -4,6 +4,17 @@ Worker Service .NET 8 que consulta en modo lectura la última nota emitida por u
 o varias cajas de Sic3000 y envía un heartbeat por punto al microservicio
 `monitor_facturacion_ms`.
 
+## Arquitectura del agente
+
+El ejecutable se organiza en workers independientes:
+
+- `MonitorWorker`: habilitado actualmente. Consulta Access y envía heartbeats.
+- `ReenvioWorker`: reservado para una fase posterior. Consultará órdenes del
+  backend y las ejecutará mediante una cola aislada, sin bloquear el monitoreo.
+
+El backend no abre conexiones hacia las cajas. Tanto el monitoreo como el futuro
+reenvío iniciarán sus conexiones desde el agente.
+
 ## Configuración local
 
 1. Copiar `src/monitor_access_agent_ms/.env.example` como
@@ -16,12 +27,19 @@ o varias cajas de Sic3000 y envía un heartbeat por punto al microservicio
    MDB, incrementar el índice de `FuentesAccess`.
 5. El proceso se compila para x86 porque el proveedor ACE disponible es de 32 bits.
 
+Cada fuente declara los tipos documentales que podrá consultar. En esta primera
+fase solamente está habilitado el lector de factura (`01`). Los códigos admitidos
+por configuración son `01`, `03`, `04`, `05`, `06` y `07`; configurar uno de los
+otros códigos deja registrada la capacidad futura, pero el agente advertirá que
+su lector todavía no está activo.
+
 Ejemplo de una fuente con dos puntos (caso Mi Economía):
 
 ```env
 Monitor__FuentesAccess__0__AccessPath=D:\Facturacion\SecureWrap\Sic3000.mdb
 Monitor__FuentesAccess__0__AccessPassword=
 Monitor__FuentesAccess__0__Tabla=NotaDiaria
+Monitor__FuentesAccess__0__TiposDocumento__0=01
 Monitor__FuentesAccess__0__FallbackAccessPath=D:\Facturacion\Sic3000.mdb
 Monitor__FuentesAccess__0__FallbackAccessPassword=CAMBIAR
 Monitor__FuentesAccess__0__FallbackTabla=Nota
