@@ -22,7 +22,7 @@ builder.Services
     .Validate(options => options.TieneFuentesValidas(),
         "Monitor:FuentesAccess debe contener al menos una fuente con ruta y puntos válidos; " +
         "cada serie debe tener seis dígitos, cada caja tres y al menos una fuente debe " +
-        "soportar factura (01).")
+        "soportar un tipo documental implementado.")
     .ValidateOnStart();
 
 builder.Services.AddSingleton<IAccessNotaReader, AccessNotaReader>();

@@ -15,8 +15,8 @@ public sealed class MonitorAgentOptions
         FuentesAccess.Count > 0 &&
         FuentesAccess.All(fuente =>
             !string.IsNullOrWhiteSpace(fuente.AccessPath) &&
-            fuente.TiposDocumento.Count > 0 &&
-            fuente.TiposDocumento.All(TiposDocumentoElectronico.EsTipoConocido) &&
+            fuente.TiposDocumentoEfectivos.All(TiposDocumentoElectronico.EsTipoConocido) &&
+            fuente.FallbackTiposDocumentoEfectivos.All(TiposDocumentoElectronico.EsTipoConocido) &&
             fuente.Tabla is "Nota" or "NotaDiaria" &&
             (string.IsNullOrWhiteSpace(fuente.FallbackAccessPath) ||
              fuente.FallbackTabla is "Nota" or "NotaDiaria") &&
@@ -26,7 +26,9 @@ public sealed class MonitorAgentOptions
                 punto.IdEmisor > 0 &&
                 punto.Serie.Length == 6 && punto.Serie.All(char.IsDigit) &&
                 punto.Caja.Length == 3 && punto.Caja.All(char.IsDigit))) &&
-        FuentesAccess.Any(fuente => fuente.Soporta(TiposDocumentoElectronico.Factura));
+        FuentesAccess.Any(fuente =>
+            fuente.TiposDocumentoEfectivos.Any(TiposDocumentoElectronico.EstaImplementado) ||
+            fuente.FallbackTiposDocumentoEfectivos.Any(TiposDocumentoElectronico.EstaImplementado));
 }
 
 public sealed class FuenteAccessOptions
@@ -38,11 +40,21 @@ public sealed class FuenteAccessOptions
     public string FallbackAccessPath { get; init; } = string.Empty;
     public string FallbackAccessPassword { get; init; } = string.Empty;
     public string FallbackTabla { get; init; } = "NotaDiaria";
-    public List<string> TiposDocumento { get; init; } = [TiposDocumentoElectronico.Factura];
+    public List<string> TiposDocumento { get; init; } = [];
+    public List<string> FallbackTiposDocumento { get; init; } = [];
     public List<PuntoOptions> Puntos { get; init; } = [];
 
+    private static readonly string[] TipoPredeterminado = [TiposDocumentoElectronico.Factura];
+    public IReadOnlyCollection<string> TiposDocumentoEfectivos =>
+        TiposDocumento.Count == 0 ? TipoPredeterminado : TiposDocumento;
+    public IReadOnlyCollection<string> FallbackTiposDocumentoEfectivos =>
+        FallbackTiposDocumento.Count == 0 ? TipoPredeterminado : FallbackTiposDocumento;
+
     public bool Soporta(string tipoDocumento) =>
-        TiposDocumento.Contains(tipoDocumento, StringComparer.Ordinal);
+        TiposDocumentoEfectivos.Contains(tipoDocumento, StringComparer.Ordinal);
+
+    public bool FallbackSoporta(string tipoDocumento) =>
+        FallbackTiposDocumentoEfectivos.Contains(tipoDocumento, StringComparer.Ordinal);
 }
 
 public sealed class PuntoOptions
@@ -75,5 +87,14 @@ public static class TiposDocumentoElectronico
         Retencion
     ];
 
+    private static readonly HashSet<string> Implementados =
+    [
+        Factura,
+        NotaCredito,
+        NotaDebito
+    ];
+
     public static bool EsTipoConocido(string tipoDocumento) => Conocidos.Contains(tipoDocumento);
+
+    public static bool EstaImplementado(string tipoDocumento) => Implementados.Contains(tipoDocumento);
 }

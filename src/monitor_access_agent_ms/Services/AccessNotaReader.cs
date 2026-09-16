@@ -18,46 +18,119 @@ public sealed class AccessNotaReader : IAccessNotaReader
         FuenteAccessOptions fuente,
         CancellationToken cancellationToken)
     {
-        var resultados = await ConsultarBaseAsync(
-            fuente.AccessPath, fuente.AccessPassword, fuente.Tabla, fuente.Puntos, cancellationToken);
+        var tipos = fuente.TiposDocumentoEfectivos
+            .Concat(fuente.FallbackTiposDocumentoEfectivos)
+            .Where(TiposDocumentoElectronico.EstaImplementado)
+            .Distinct(StringComparer.Ordinal);
+        var resultados = new List<ResultadoLecturaPunto>();
 
-        if (string.IsNullOrWhiteSpace(fuente.FallbackAccessPath))
-            return resultados;
-
-        var alternativos = await ConsultarBaseAsync(
-            fuente.FallbackAccessPath, fuente.FallbackAccessPassword, fuente.FallbackTabla,
-            fuente.Puntos, cancellationToken);
-        var alternativoPorPunto = alternativos.ToDictionary(x => x.Punto);
-
-        return resultados.Select(resultado =>
+        foreach (var tipo in tipos)
         {
-            var alternativo = alternativoPorPunto[resultado.Punto];
-            ResultadoLecturaPunto seleccionado;
-            if (resultado.Nota is not null && alternativo.Nota is not null)
-                seleccionado = resultado.Nota.Secuencial >= alternativo.Nota.Secuencial
-                    ? resultado
-                    : alternativo;
-            else if (resultado.Nota is not null)
-                seleccionado = resultado;
-            else if (alternativo.Nota is not null)
-                seleccionado = alternativo;
-            else
-                return new ResultadoLecturaPunto(resultado.Punto, null, new AggregateException(
-                    "El punto no se encontró en NotaDiaria ni en Nota.",
-                    resultado.Error!, alternativo.Error!));
+            IReadOnlyList<ResultadoLecturaPunto>? principales = null;
+            IReadOnlyList<ResultadoLecturaPunto>? alternativos = null;
 
-            var errorNota = fuente.Tabla == "Nota"
-                ? resultado.Error
-                : fuente.FallbackTabla == "Nota"
-                    ? alternativo.Error
-                    : null;
+            if (fuente.Soporta(tipo))
+                principales = await ConsultarTipoAsync(
+                    fuente.AccessPath, fuente.AccessPassword, fuente.Tabla,
+                    fuente.Puntos, tipo, cancellationToken);
 
-            return errorNota is null
+            if (fuente.FallbackSoporta(tipo) && !string.IsNullOrWhiteSpace(fuente.FallbackAccessPath))
+                alternativos = await ConsultarTipoAsync(
+                    fuente.FallbackAccessPath, fuente.FallbackAccessPassword, fuente.FallbackTabla,
+                    fuente.Puntos, tipo, cancellationToken);
+
+            resultados.AddRange(CombinarResultados(
+                fuente, tipo, principales, alternativos));
+        }
+
+        return resultados;
+    }
+
+    private static Task<IReadOnlyList<ResultadoLecturaPunto>> ConsultarTipoAsync(
+        string accessPath,
+        string accessPassword,
+        string tablaFactura,
+        IReadOnlyCollection<PuntoOptions> puntos,
+        string tipoDocumento,
+        CancellationToken cancellationToken) => tipoDocumento switch
+        {
+            TiposDocumentoElectronico.Factura => ConsultarBaseAsync(
+                accessPath, accessPassword, tablaFactura, puntos, tipoDocumento, cancellationToken),
+            TiposDocumentoElectronico.NotaCredito or TiposDocumentoElectronico.NotaDebito =>
+                ConsultarNotasCreditoAsync(
+                    accessPath, accessPassword, puntos, tipoDocumento, cancellationToken),
+            _ => throw new InvalidOperationException(
+                $"El lector del tipo documental {tipoDocumento} todavía no está implementado.")
+        };
+
+    private static IReadOnlyList<ResultadoLecturaPunto> CombinarResultados(
+        FuenteAccessOptions fuente,
+        string tipoDocumento,
+        IReadOnlyList<ResultadoLecturaPunto>? principales,
+        IReadOnlyList<ResultadoLecturaPunto>? alternativos)
+    {
+        var principalPorPunto = principales?.ToDictionary(x => x.Punto);
+        var alternativoPorPunto = alternativos?.ToDictionary(x => x.Punto);
+
+        return fuente.Puntos.Select(punto =>
+        {
+            ResultadoLecturaPunto? principal = null;
+            ResultadoLecturaPunto? alternativo = null;
+            principalPorPunto?.TryGetValue(punto, out principal);
+            alternativoPorPunto?.TryGetValue(punto, out alternativo);
+
+            var seleccionado = SeleccionarMayor(principal, alternativo);
+            if (seleccionado?.Nota is null)
+            {
+                var errores = new[] { principal?.Error, alternativo?.Error }
+                    .OfType<Exception>()
+                    .ToArray();
+                if (errores.Length == 0 &&
+                    tipoDocumento is TiposDocumentoElectronico.NotaCredito or
+                        TiposDocumentoElectronico.NotaDebito)
+                    return new ResultadoLecturaPunto(punto, tipoDocumento, null, null);
+
+                var error = errores.Length switch
+                {
+                    0 => new InvalidOperationException(
+                        $"No se encontraron documentos tipo {tipoDocumento} para la caja {punto.Caja}."),
+                    1 => errores[0],
+                    _ => new AggregateException(
+                        $"No fue posible obtener el documento tipo {tipoDocumento}.", errores)
+                };
+                return new ResultadoLecturaPunto(punto, tipoDocumento, null, error);
+            }
+
+            // Para factura se mantiene la regla histórica: la ruta cuya tabla
+            // es Nota es crítica. Para NC/ND la ruta alternativa central es
+            // crítica cuando fue configurada para ese tipo.
+            var errorCritico = tipoDocumento == TiposDocumentoElectronico.Factura
+                ? fuente.Tabla == "Nota"
+                    ? principal?.Error
+                    : fuente.FallbackTabla == "Nota"
+                        ? alternativo?.Error
+                        : null
+                : fuente.FallbackSoporta(tipoDocumento)
+                    ? alternativo?.Error
+                    : principal?.Error;
+
+            return errorCritico is null
                 ? seleccionado
-                : new ResultadoLecturaPunto(resultado.Punto, seleccionado.Nota,
+                : new ResultadoLecturaPunto(punto, tipoDocumento, seleccionado.Nota,
                     new InvalidOperationException(
-                        "Falló la consulta de la base crítica con tabla Nota.", errorNota));
+                        $"Falló la fuente crítica del documento tipo {tipoDocumento}.", errorCritico));
         }).ToArray();
+    }
+
+    private static ResultadoLecturaPunto? SeleccionarMayor(
+        ResultadoLecturaPunto? principal,
+        ResultadoLecturaPunto? alternativo)
+    {
+        if (principal?.Nota is not null && alternativo?.Nota is not null)
+            return principal.Nota.Secuencial >= alternativo.Nota.Secuencial
+                ? principal
+                : alternativo;
+        return principal?.Nota is not null ? principal : alternativo;
     }
 
     private static async Task<IReadOnlyList<ResultadoLecturaPunto>> ConsultarBaseAsync(
@@ -65,6 +138,7 @@ public sealed class AccessNotaReader : IAccessNotaReader
         string accessPassword,
         string tabla,
         IReadOnlyCollection<PuntoOptions> puntos,
+        string tipoDocumento,
         CancellationToken cancellationToken)
     {
         try
@@ -79,18 +153,55 @@ public sealed class AccessNotaReader : IAccessNotaReader
                 try
                 {
                     var nota = await ObtenerUltimaNotaAsync(connection, punto, tabla, cancellationToken);
-                    resultados.Add(new ResultadoLecturaPunto(punto, nota, null));
+                    resultados.Add(new ResultadoLecturaPunto(punto, tipoDocumento, nota, null));
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
-                    resultados.Add(new ResultadoLecturaPunto(punto, null, exception));
+                    resultados.Add(new ResultadoLecturaPunto(punto, tipoDocumento, null, exception));
                 }
             }
             return resultados;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            return puntos.Select(punto => new ResultadoLecturaPunto(punto, null, exception)).ToArray();
+            return puntos.Select(punto =>
+                new ResultadoLecturaPunto(punto, tipoDocumento, null, exception)).ToArray();
+        }
+    }
+
+    private static async Task<IReadOnlyList<ResultadoLecturaPunto>> ConsultarNotasCreditoAsync(
+        string accessPath,
+        string accessPassword,
+        IReadOnlyCollection<PuntoOptions> puntos,
+        string tipoDocumento,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!File.Exists(accessPath))
+                throw new FileNotFoundException("No se encontró la base Access configurada.", accessPath);
+
+            await using var connection = await AbrirConexionAsync(accessPath, accessPassword, cancellationToken);
+            var resultados = new List<ResultadoLecturaPunto>(puntos.Count);
+            foreach (var punto in puntos)
+            {
+                try
+                {
+                    var documento = await ObtenerUltimaNotaCreditoAsync(
+                        connection, punto, tipoDocumento, cancellationToken);
+                    resultados.Add(new ResultadoLecturaPunto(punto, tipoDocumento, documento, null));
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    resultados.Add(new ResultadoLecturaPunto(punto, tipoDocumento, null, exception));
+                }
+            }
+            return resultados;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return puntos.Select(punto =>
+                new ResultadoLecturaPunto(punto, tipoDocumento, null, exception)).ToArray();
         }
     }
 
@@ -170,6 +281,48 @@ public sealed class AccessNotaReader : IAccessNotaReader
         var fecha = reader.IsDBNull(2) ? DateTime.Today : reader.GetDateTime(2).Date;
         var hora = reader.IsDBNull(3) ? TimeSpan.Zero : reader.GetDateTime(3).TimeOfDay;
         return new UltimaNota(numeroDocumento, reader.GetString(1).Trim(), secuencial, fecha.Add(hora));
+    }
+
+    private static async Task<UltimaNota?> ObtenerUltimaNotaCreditoAsync(
+        OleDbConnection connection,
+        PuntoOptions punto,
+        string tipoDocumento,
+        CancellationToken cancellationToken)
+    {
+        var id = tipoDocumento switch
+        {
+            TiposDocumentoElectronico.NotaCredito => "NC",
+            TiposDocumentoElectronico.NotaDebito => "ND",
+            _ => throw new InvalidOperationException(
+                $"El tipo {tipoDocumento} no corresponde a NotaCredito.")
+        };
+
+        const string sql = """
+            SELECT TOP 1 Trim(numnota), Trim(caja), fecha
+            FROM [NotaCredito]
+            WHERE UCase(Trim(id)) = ?
+              AND Trim(caja) = ?
+              AND Len(Trim(numnota)) = 10
+              AND Left(Trim(numnota), 3) = ?
+            ORDER BY CLng(Mid(Trim(numnota), 4)) DESC
+            """;
+
+        await using var command = new OleDbCommand(sql, connection);
+        command.Parameters.Add("@id", OleDbType.VarWChar, 5).Value = id;
+        command.Parameters.Add("@caja", OleDbType.VarWChar, 10).Value = punto.Caja;
+        command.Parameters.Add("@prefijo", OleDbType.VarWChar, 3).Value = punto.Caja;
+
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        if (reader is null || !await reader.ReadAsync(cancellationToken))
+            return null;
+
+        var numeroDocumento = reader.GetString(0).Trim();
+        if (!TryObtenerSecuencial(numeroDocumento, punto.Caja, out var secuencial))
+            throw new InvalidDataException(
+                $"El número de documento '{numeroDocumento}' no tiene el formato esperado.");
+
+        var fecha = reader.IsDBNull(2) ? DateTime.Today : reader.GetDateTime(2);
+        return new UltimaNota(numeroDocumento, reader.GetString(1).Trim(), secuencial, fecha);
     }
 
     internal static bool TryObtenerSecuencial(string? numeroDocumento, string caja, out long secuencial)

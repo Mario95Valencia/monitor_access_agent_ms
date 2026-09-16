@@ -23,8 +23,10 @@ public sealed class MonitorWorker(
     {
         foreach (var fuente in _options.FuentesAccess)
         {
-            var pendientes = fuente.TiposDocumento
-                .Where(tipo => tipo != TiposDocumentoElectronico.Factura)
+            var pendientes = fuente.TiposDocumentoEfectivos
+                .Concat(fuente.FallbackTiposDocumentoEfectivos)
+                .Distinct(StringComparer.Ordinal)
+                .Where(tipo => !TiposDocumentoElectronico.EstaImplementado(tipo))
                 .ToArray();
             if (pendientes.Length > 0)
                 logger.LogWarning(
@@ -75,9 +77,7 @@ public sealed class MonitorWorker(
     {
         // Las fuentes son independientes. Una ruta lenta o no disponible no
         // debe impedir que las demás estaciones terminen su ciclo.
-        await Task.WhenAll(_options.FuentesAccess
-            .Where(fuente => fuente.Soporta(TiposDocumentoElectronico.Factura))
-            .Select(
+        await Task.WhenAll(_options.FuentesAccess.Select(
             fuente => ProcesarFuenteAsync(fuente, cancellationToken)));
     }
 
@@ -93,8 +93,13 @@ public sealed class MonitorWorker(
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             logger.LogError(exception, "No fue posible abrir la fuente Access {AccessPath}.", fuente.AccessPath);
+            var tipos = fuente.TiposDocumentoEfectivos
+                .Concat(fuente.FallbackTiposDocumentoEfectivos)
+                .Where(TiposDocumentoElectronico.EstaImplementado)
+                .Distinct(StringComparer.Ordinal);
             resultados = fuente.Puntos
-                .Select(punto => new ResultadoLecturaPunto(punto, null, exception))
+                .SelectMany(punto => tipos.Select(tipo =>
+                    new ResultadoLecturaPunto(punto, tipo, null, exception)))
                 .ToArray();
         }
 
@@ -115,23 +120,33 @@ public sealed class MonitorWorker(
         {
             var nota = resultado.Nota;
             var accessDisponible = resultado.Error is null;
-            request = new HeartbeatRequest(punto.CodigoPunto, punto.IdEmisor, punto.Serie, nota.Secuencial,
+            request = new HeartbeatRequest(punto.CodigoPunto, punto.IdEmisor, resultado.TipoDocumento,
+                punto.Serie, nota.Secuencial,
                 nota.NumeroDocumento, nota.FechaDocumento, accessDisponible, _options.VersionAgente,
                 resultado.Error is null ? null : DescribirError(resultado.Error));
             if (accessDisponible)
                 logger.LogInformation(
-                    "Punto {Punto}: Access disponible. Documento {Documento}, secuencial {Secuencial}.",
-                    punto.CodigoPunto, nota.NumeroDocumento, nota.Secuencial);
+                    "Punto {Punto}: Access disponible para tipo {TipoDocumento}. Documento {Documento}, secuencial {Secuencial}.",
+                    punto.CodigoPunto, resultado.TipoDocumento, nota.NumeroDocumento, nota.Secuencial);
             else
                 logger.LogError(resultado.Error,
-                    "Punto {Punto}: se obtuvo el documento {Documento}, pero falló la base crítica Nota.",
-                    punto.CodigoPunto, nota.NumeroDocumento);
+                    "Punto {Punto}: se obtuvo el documento tipo {TipoDocumento} {Documento}, pero falló su fuente crítica.",
+                    punto.CodigoPunto, resultado.TipoDocumento, nota.NumeroDocumento);
+        }
+        else if (resultado.Error is null)
+        {
+            logger.LogInformation(
+                "Punto {Punto}: Access disponible para tipo {TipoDocumento}, sin documentos emitidos.",
+                punto.CodigoPunto, resultado.TipoDocumento);
+            request = new HeartbeatRequest(punto.CodigoPunto, punto.IdEmisor, resultado.TipoDocumento,
+                punto.Serie, null, null, null, true, _options.VersionAgente, null);
         }
         else
         {
-            var error = resultado.Error ?? new InvalidOperationException("Error de lectura no especificado.");
+            var error = resultado.Error;
             logger.LogError(error, "Punto {Punto}: no fue posible consultar Access.", punto.CodigoPunto);
-            request = new HeartbeatRequest(punto.CodigoPunto, punto.IdEmisor, punto.Serie, null, null, null,
+            request = new HeartbeatRequest(punto.CodigoPunto, punto.IdEmisor, resultado.TipoDocumento,
+                punto.Serie, null, null, null,
                 false, _options.VersionAgente, DescribirError(error));
         }
 

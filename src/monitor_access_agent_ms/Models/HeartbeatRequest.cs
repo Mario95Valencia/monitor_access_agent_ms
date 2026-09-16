@@ -3,6 +3,7 @@ namespace monitor_access_agent_ms.Models;
 public sealed record HeartbeatRequest(
     string CodigoPunto,
     long IdEmisor,
+    string TipoDocumento,
     string Serie,
     long? SecuencialEmitido,
     string? NumeroDocumento,

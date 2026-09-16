@@ -27,11 +27,11 @@ reenvío iniciarán sus conexiones desde el agente.
    MDB, incrementar el índice de `FuentesAccess`.
 5. El proceso se compila para x86 porque el proveedor ACE disponible es de 32 bits.
 
-Cada fuente declara los tipos documentales que podrá consultar. En esta primera
-fase solamente está habilitado el lector de factura (`01`). Los códigos admitidos
-por configuración son `01`, `03`, `04`, `05`, `06` y `07`; configurar uno de los
-otros códigos deja registrada la capacidad futura, pero el agente advertirá que
-su lector todavía no está activo.
+Cada ruta declara los tipos documentales que podrá consultar. Están habilitados
+los lectores de factura (`01`), nota de crédito (`04`) y nota de débito (`05`).
+Los códigos reconocidos por configuración son `01`, `03`, `04`, `05`, `06` y
+`07`; configurar un código cuyo lector todavía no esté activo genera una
+advertencia y no ejecuta una consulta incompleta.
 
 Ejemplo de una fuente con dos puntos (caso Mi Economía):
 
@@ -43,6 +43,9 @@ Monitor__FuentesAccess__0__TiposDocumento__0=01
 Monitor__FuentesAccess__0__FallbackAccessPath=D:\Facturacion\Sic3000.mdb
 Monitor__FuentesAccess__0__FallbackAccessPassword=CAMBIAR
 Monitor__FuentesAccess__0__FallbackTabla=Nota
+Monitor__FuentesAccess__0__FallbackTiposDocumento__0=01
+Monitor__FuentesAccess__0__FallbackTiposDocumento__1=04
+Monitor__FuentesAccess__0__FallbackTiposDocumento__2=05
 Monitor__FuentesAccess__0__Puntos__0__CodigoPunto=PTO-001
 Monitor__FuentesAccess__0__Puntos__0__IdEmisor=1
 Monitor__FuentesAccess__0__Puntos__0__Serie=002001
