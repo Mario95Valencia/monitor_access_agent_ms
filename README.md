@@ -34,9 +34,11 @@ el siguiente ciclo; no es necesario reiniciar manualmente el servicio.
 
 Cada ruta declara los tipos documentales que podrá consultar. Están habilitados
 los lectores de factura (`01`), nota de crédito (`04`) y nota de débito (`05`).
-Los códigos reconocidos por configuración son `01`, `03`, `04`, `05`, `06` y
-`07`; configurar un código cuyo lector todavía no esté activo genera una
-advertencia y no ejecuta una consulta incompleta.
+El lector de guía (`06`) también está disponible, pero exige configurar
+explícitamente `GuiaNumeroCampo` (`numGuia` o `numFac`) y `GuiaFechaCampo`
+(`fechaEmisionDocSustento`, `fechaIniTransporte` o `fechaFinTransporte`). Los
+códigos reconocidos son `01`, `03`, `04`, `05`, `06` y `07`; configurar un
+código cuyo lector todavía no esté activo genera una advertencia.
 
 Ejemplo de una fuente con dos puntos (caso Mi Economía):
 

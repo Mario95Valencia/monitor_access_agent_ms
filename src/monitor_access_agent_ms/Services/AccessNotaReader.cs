@@ -32,11 +32,13 @@ public sealed class AccessNotaReader : IAccessNotaReader
             if (fuente.Soporta(tipo))
                 principales = await ConsultarTipoAsync(
                     fuente.AccessPath, fuente.AccessPassword, fuente.Tabla,
+                    fuente.GuiaNumeroCampo, fuente.GuiaFechaCampo,
                     fuente.Puntos, tipo, cancellationToken);
 
             if (fuente.FallbackSoporta(tipo) && !string.IsNullOrWhiteSpace(fuente.FallbackAccessPath))
                 alternativos = await ConsultarTipoAsync(
                     fuente.FallbackAccessPath, fuente.FallbackAccessPassword, fuente.FallbackTabla,
+                    fuente.GuiaNumeroCampo, fuente.GuiaFechaCampo,
                     fuente.Puntos, tipo, cancellationToken);
 
             resultados.AddRange(CombinarResultados(
@@ -50,6 +52,8 @@ public sealed class AccessNotaReader : IAccessNotaReader
         string accessPath,
         string accessPassword,
         string tablaFactura,
+        string guiaNumeroCampo,
+        string guiaFechaCampo,
         IReadOnlyCollection<PuntoOptions> puntos,
         string tipoDocumento,
         CancellationToken cancellationToken) => tipoDocumento switch
@@ -59,6 +63,9 @@ public sealed class AccessNotaReader : IAccessNotaReader
             TiposDocumentoElectronico.NotaCredito or TiposDocumentoElectronico.NotaDebito =>
                 ConsultarNotasCreditoAsync(
                     accessPath, accessPassword, puntos, tipoDocumento, cancellationToken),
+            TiposDocumentoElectronico.GuiaRemision => ConsultarGuiasAsync(
+                accessPath, accessPassword, guiaNumeroCampo, guiaFechaCampo,
+                puntos, cancellationToken),
             _ => throw new InvalidOperationException(
                 $"El lector del tipo documental {tipoDocumento} todavía no está implementado.")
         };
@@ -87,7 +94,8 @@ public sealed class AccessNotaReader : IAccessNotaReader
                     .ToArray();
                 if (errores.Length == 0 &&
                     tipoDocumento is TiposDocumentoElectronico.NotaCredito or
-                        TiposDocumentoElectronico.NotaDebito)
+                        TiposDocumentoElectronico.NotaDebito or
+                        TiposDocumentoElectronico.GuiaRemision)
                     return new ResultadoLecturaPunto(punto, tipoDocumento, null, null);
 
                 var error = errores.Length switch
@@ -202,6 +210,46 @@ public sealed class AccessNotaReader : IAccessNotaReader
         {
             return puntos.Select(punto =>
                 new ResultadoLecturaPunto(punto, tipoDocumento, null, exception)).ToArray();
+        }
+    }
+
+    private static async Task<IReadOnlyList<ResultadoLecturaPunto>> ConsultarGuiasAsync(
+        string accessPath,
+        string accessPassword,
+        string numeroCampo,
+        string fechaCampo,
+        IReadOnlyCollection<PuntoOptions> puntos,
+        CancellationToken cancellationToken)
+    {
+        ValidarCamposGuia(numeroCampo, fechaCampo);
+        try
+        {
+            if (!File.Exists(accessPath))
+                throw new FileNotFoundException("No se encontró la base Access configurada.", accessPath);
+
+            await using var connection = await AbrirConexionAsync(accessPath, accessPassword, cancellationToken);
+            var resultados = new List<ResultadoLecturaPunto>(puntos.Count);
+            foreach (var punto in puntos)
+            {
+                try
+                {
+                    var documento = await ObtenerUltimaGuiaAsync(
+                        connection, punto, numeroCampo, fechaCampo, cancellationToken);
+                    resultados.Add(new ResultadoLecturaPunto(
+                        punto, TiposDocumentoElectronico.GuiaRemision, documento, null));
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    resultados.Add(new ResultadoLecturaPunto(
+                        punto, TiposDocumentoElectronico.GuiaRemision, null, exception));
+                }
+            }
+            return resultados;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return puntos.Select(punto => new ResultadoLecturaPunto(
+                punto, TiposDocumentoElectronico.GuiaRemision, null, exception)).ToArray();
         }
     }
 
@@ -323,6 +371,69 @@ public sealed class AccessNotaReader : IAccessNotaReader
 
         var fecha = reader.IsDBNull(2) ? DateTime.Today : reader.GetDateTime(2);
         return new UltimaNota(numeroDocumento, reader.GetString(1).Trim(), secuencial, fecha);
+    }
+
+    private static async Task<UltimaNota?> ObtenerUltimaGuiaAsync(
+        OleDbConnection connection,
+        PuntoOptions punto,
+        string numeroCampo,
+        string fechaCampo,
+        CancellationToken cancellationToken)
+    {
+        ValidarCamposGuia(numeroCampo, fechaCampo);
+        var sql = $"""
+            SELECT [{numeroCampo}], [{fechaCampo}]
+            FROM [GuiaRemision]
+            WHERE [{numeroCampo}] Is Not Null
+            """;
+
+        await using var command = new OleDbCommand(sql, connection);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        UltimaNota? mayor = null;
+        while (reader is not null && await reader.ReadAsync(cancellationToken))
+        {
+            if (reader.IsDBNull(0))
+                continue;
+
+            var numeroDocumento = Convert.ToString(reader.GetValue(0))?.Trim();
+            if (!TryObtenerSecuencialElectronico(
+                    numeroDocumento, punto.Serie, punto.Caja, out var secuencial))
+                continue;
+
+            var fecha = reader.IsDBNull(1) ? DateTime.Today : Convert.ToDateTime(reader.GetValue(1));
+            if (mayor is null || secuencial > mayor.Secuencial)
+                mayor = new UltimaNota(numeroDocumento!, punto.Caja, secuencial, fecha);
+        }
+
+        return mayor;
+    }
+
+    private static void ValidarCamposGuia(string numeroCampo, string fechaCampo)
+    {
+        if (numeroCampo is not ("numGuia" or "numFac"))
+            throw new InvalidOperationException(
+                "GuiaNumeroCampo debe ser numGuia o numFac.");
+        if (fechaCampo is not ("fechaEmisionDocSustento" or
+            "fechaIniTransporte" or "fechaFinTransporte"))
+            throw new InvalidOperationException(
+                "GuiaFechaCampo no corresponde a una fecha permitida de GuiaRemision.");
+    }
+
+    internal static bool TryObtenerSecuencialElectronico(
+        string? numeroDocumento,
+        string serie,
+        string caja,
+        out long secuencial)
+    {
+        secuencial = 0;
+        if (string.IsNullOrWhiteSpace(numeroDocumento))
+            return false;
+
+        var digitos = new string(numeroDocumento.Where(char.IsDigit).ToArray());
+        if (digitos.Length == 15 && digitos.StartsWith(serie, StringComparison.Ordinal))
+            return long.TryParse(digitos[6..], out secuencial);
+
+        return TryObtenerSecuencial(digitos, caja, out secuencial);
     }
 
     internal static bool TryObtenerSecuencial(string? numeroDocumento, string caja, out long secuencial)

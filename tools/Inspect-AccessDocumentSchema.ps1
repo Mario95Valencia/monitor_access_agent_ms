@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Path,
     [string]$Password = "",
-    [switch]$IncludeSamples
+    [switch]$IncludeSamples,
+    [switch]$ListTables
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,7 +36,23 @@ foreach ($provider in $providers) {
 if ($null -eq $connection) { throw "No fue posible abrir la base." }
 
 try {
-    $columns = foreach ($tableName in @("NotaCredito", "GuiaRemision")) {
+    if ($ListTables) {
+        try {
+            $command = $connection.CreateCommand()
+            $command.CommandText = "SELECT Name, Type, Database, ForeignName FROM MSysObjects WHERE Type IN (1, 4, 6) AND Left(Name, 4) <> 'MSys' ORDER BY Name"
+            $adapter = New-Object System.Data.OleDb.OleDbDataAdapter($command)
+            $data = New-Object System.Data.DataTable
+            [void]$adapter.Fill($data)
+            $data | Format-Table -AutoSize | Out-String -Width 300 | Write-Output
+            $adapter.Dispose()
+            $command.Dispose()
+        }
+        catch {
+            Write-Warning "TABLE_LIST_ERROR :: $($_.Exception.Message)"
+        }
+    }
+
+    $columns = foreach ($tableName in @("NotaCredito", "GuiaRemision", "CgRetencion")) {
         try {
             $command = $connection.CreateCommand()
             $command.CommandText = "SELECT * FROM [$tableName] WHERE 1 = 0"

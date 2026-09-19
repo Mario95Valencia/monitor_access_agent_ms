@@ -17,6 +17,7 @@ public sealed class MonitorAgentOptions
             !string.IsNullOrWhiteSpace(fuente.AccessPath) &&
             fuente.TiposDocumentoEfectivos.All(TiposDocumentoElectronico.EsTipoConocido) &&
             fuente.FallbackTiposDocumentoEfectivos.All(TiposDocumentoElectronico.EsTipoConocido) &&
+            fuente.TieneConfiguracionGuiaValida() &&
             fuente.Tabla is "Nota" or "NotaDiaria" &&
             (string.IsNullOrWhiteSpace(fuente.FallbackAccessPath) ||
              fuente.FallbackTabla is "Nota" or "NotaDiaria") &&
@@ -42,6 +43,8 @@ public sealed class FuenteAccessOptions
     public string FallbackTabla { get; init; } = "NotaDiaria";
     public List<string> TiposDocumento { get; init; } = [];
     public List<string> FallbackTiposDocumento { get; init; } = [];
+    public string GuiaNumeroCampo { get; init; } = string.Empty;
+    public string GuiaFechaCampo { get; init; } = string.Empty;
     public List<PuntoOptions> Puntos { get; init; } = [];
 
     private static readonly string[] TipoPredeterminado = [TiposDocumentoElectronico.Factura];
@@ -55,6 +58,18 @@ public sealed class FuenteAccessOptions
 
     public bool FallbackSoporta(string tipoDocumento) =>
         FallbackTiposDocumentoEfectivos.Contains(tipoDocumento, StringComparer.Ordinal);
+
+    public bool TieneConfiguracionGuiaValida()
+    {
+        var usaGuia = Soporta(TiposDocumentoElectronico.GuiaRemision) ||
+                      FallbackSoporta(TiposDocumentoElectronico.GuiaRemision);
+        if (!usaGuia)
+            return true;
+
+        return GuiaNumeroCampo is "numGuia" or "numFac" &&
+               GuiaFechaCampo is "fechaEmisionDocSustento" or
+                   "fechaIniTransporte" or "fechaFinTransporte";
+    }
 }
 
 public sealed class PuntoOptions
@@ -91,7 +106,8 @@ public static class TiposDocumentoElectronico
     [
         Factura,
         NotaCredito,
-        NotaDebito
+        NotaDebito,
+        GuiaRemision
     ];
 
     public static bool EsTipoConocido(string tipoDocumento) => Conocidos.Contains(tipoDocumento);
