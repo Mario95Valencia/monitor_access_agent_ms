@@ -14,7 +14,7 @@ public sealed class MonitorWorker(
     IMonitorApiClient apiClient,
     IOptions<MonitorAgentOptions> options,
     AgentRuntimeOptions runtimeOptions,
-    IHostApplicationLifetime applicationLifetime,
+    IRunOnceCoordinator runOnceCoordinator,
     ILogger<MonitorWorker> logger) : BackgroundService
 {
     private readonly MonitorAgentOptions _options = options.Value;
@@ -57,7 +57,7 @@ public sealed class MonitorWorker(
 
             if (runtimeOptions.RunOnce)
             {
-                applicationLifetime.StopApplication();
+                runOnceCoordinator.CompletarWorker(nameof(MonitorWorker));
                 break;
             }
 

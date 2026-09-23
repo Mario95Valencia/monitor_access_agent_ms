@@ -5,7 +5,11 @@
       "commandName": "Project",
       "dotnetRunMessages": true,
       "environmentVariables": {
-        "DOTNET_ENVIRONMENT": "Development"
+        "DOTNET_ENVIRONMENT": "Development",
+        "Reenvio__Enabled": "false",
+        "Reenvio__RutaParaEnviar": "C:\\facturaElectronica\\ParaEnviar",
+        "Reenvio__IntervaloSegundos": "30",
+        "Reenvio__ModoOperacion": "SoloValidar"
       }
     }
   }

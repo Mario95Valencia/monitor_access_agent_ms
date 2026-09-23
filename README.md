@@ -9,8 +9,8 @@ o varias cajas de Sic3000 y envía un heartbeat por punto al microservicio
 El ejecutable se organiza en workers independientes:
 
 - `MonitorWorker`: habilitado actualmente. Consulta Access y envía heartbeats.
-- `ReenvioWorker`: reservado para una fase posterior. Consultará órdenes del
-  backend y las ejecutará mediante una cola aislada, sin bloquear el monitoreo.
+- `ReenvioWorker`: consulta una orden a la vez, localiza y valida el XML y
+  reporta el resultado sin bloquear el monitoreo.
 
 El backend no abre conexiones hacia las cajas. Tanto el monitoreo como el futuro
 reenvío iniciarán sus conexiones desde el agente.
@@ -19,6 +19,47 @@ El cliente HTTP renueva periódicamente sus conexiones y realiza hasta tres
 intentos ante errores de red, timeout, `408`, `429` o respuestas `5xx`. Si el
 backend continúa detenido, el worker conserva su ejecución y vuelve a enviar en
 el siguiente ciclo; no es necesario reiniciar manualmente el servicio.
+
+## Reenvío local
+
+El backend conserva la cola persistente. El agente consulta las órdenes de cada
+`CodigoPunto`; no expone puertos ni recibe conexiones entrantes. La búsqueda se
+limita a archivos `.xml` y usa esta prioridad:
+
+1. `nombreArchivo` exacto y seguro.
+2. Clave de acceso en el nombre.
+3. Serie y secuencial en el nombre.
+
+El XML candidato se abre con DTD deshabilitado y debe contener exactamente la
+clave indicada o la combinación tipo + serie + secuencial. Si existen varios
+candidatos válidos, ninguno se envía y el resultado se reporta como ambiguo.
+El índice de nombres se conserva en memoria y se refresca cuando no hay
+coincidencias, evitando leer todos los XML en cada ciclo.
+
+Configuración inicial segura:
+
+```env
+Reenvio__Enabled=true
+Reenvio__RutaParaEnviar=C:\facturaElectronica\ParaEnviar
+Reenvio__IntervaloSegundos=30
+Reenvio__CacheSegundos=60
+Reenvio__BuscarEnSubdirectorios=false
+Reenvio__ApiUrl=http://SERVIDOR:5067/balanceApiUrl
+Reenvio__ModoOperacion=SoloValidar
+Reenvio__RutaDestino=
+```
+
+`SoloValidar` encuentra y valida el XML, pero devuelve `reenviado=false` hasta
+conocer el mecanismo local real. Para habilitar una copia explícita hacia una
+carpeta consumida por otra aplicación:
+
+```env
+Reenvio__ModoOperacion=CopiarACarpeta
+Reenvio__RutaDestino=C:\RUTA_CONFIRMADA_POR_EL_USUARIO
+```
+
+La copia se publica con movimiento atómico desde un temporal, nunca sobrescribe
+un archivo existente y nunca elimina ni modifica el XML original.
 
 ## Configuración local
 
@@ -85,6 +126,19 @@ dotnet run --project .\src\monitor_access_agent_ms\monitor_access_agent_ms.cspro
 
 El modo `--once` consulta Access, envía un heartbeat y finaliza. Sin ese argumento,
 el agente continúa ejecutándose cada minuto por defecto, según `Monitor__IntervaloMinutos`.
+
+Con `Reenvio__Enabled=true`, `--once` también consulta como máximo una tarea de
+reenvío y espera a que `MonitorWorker` y `ReenvioWorker` terminen antes de cerrar.
+
+## Pruebas del reenvío
+
+```powershell
+dotnet run --project .\tests\monitor_access_agent_ms.Tests\monitor_access_agent_ms.Tests.csproj -c Release
+```
+
+Las pruebas comprueban coincidencia exacta, rechazo de otro tipo documental,
+ambigüedad, copia sin sobrescritura conservando el original y los contratos HTTP
+para tomar una tarea y reportar su resultado.
 
 La cuenta del servicio necesita leer el MDB y poder crear el archivo de bloqueo de
 Access en su carpeta. El agente no escribe ni modifica información dentro del MDB.
