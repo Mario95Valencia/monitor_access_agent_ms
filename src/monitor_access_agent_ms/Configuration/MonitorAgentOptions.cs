@@ -107,7 +107,8 @@ public static class TiposDocumentoElectronico
         Factura,
         NotaCredito,
         NotaDebito,
-        GuiaRemision
+        GuiaRemision,
+        Retencion
     ];
 
     public static bool EsTipoConocido(string tipoDocumento) => Conocidos.Contains(tipoDocumento);

@@ -37,8 +37,11 @@ los lectores de factura (`01`), nota de crédito (`04`) y nota de débito (`05`)
 El lector de guía (`06`) también está disponible, pero exige configurar
 explícitamente `GuiaNumeroCampo` (`numGuia` o `numFac`) y `GuiaFechaCampo`
 (`fechaEmisionDocSustento`, `fechaIniTransporte` o `fechaFinTransporte`). Los
-códigos reconocidos son `01`, `03`, `04`, `05`, `06` y `07`; configurar un
-código cuyo lector todavía no esté activo genera una advertencia.
+códigos reconocidos son `01`, `03`, `04`, `05`, `06` y `07`. Retención (`07`)
+se obtiene de `CgRetenciones`, filtrando `nestablecimiento` y `puntoemision`
+con la serie del punto, agrupando duplicados por `Secuencial` y seleccionando
+el mayor. Configurar un código cuyo lector todavía no esté activo genera una
+advertencia.
 
 Ejemplo de una fuente con dos puntos (caso Mi Economía):
 

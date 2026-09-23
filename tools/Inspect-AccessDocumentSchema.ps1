@@ -52,7 +52,7 @@ try {
         }
     }
 
-    $columns = foreach ($tableName in @("NotaCredito", "GuiaRemision", "CgRetencion")) {
+    $columns = foreach ($tableName in @("NotaCredito", "GuiaRemision", "CgRetencion", "CgRetenciones")) {
         try {
             $command = $connection.CreateCommand()
             $command.CommandText = "SELECT * FROM [$tableName] WHERE 1 = 0"
@@ -87,7 +87,9 @@ try {
     if ($IncludeSamples) {
         foreach ($query in @(
             "SELECT TOP 10 numnota, id, caja, fecha, cancelado FROM [NotaCredito] ORDER BY fecha DESC",
-            "SELECT TOP 10 numGuia, numFac, codEstablecimientoDestino, fechaEmisionDocSustento, fechaIniTransporte, fechaFinTransporte FROM [GuiaRemision] ORDER BY Id DESC"
+            "SELECT TOP 10 numGuia, numFac, codEstablecimientoDestino, fechaEmisionDocSustento, fechaIniTransporte, fechaFinTransporte FROM [GuiaRemision] ORDER BY Id DESC",
+            "SELECT TOP 20 Tipdoc, Fecha, nestablecimiento, puntoemision, Secuencial FROM [CgRetenciones] ORDER BY Fecha DESC",
+            "SELECT TOP 1 Trim(Secuencial) AS UltimoSecuencial, Max(Fecha) AS UltimaFecha FROM [CgRetenciones] WHERE Trim(nestablecimiento)='001' AND Trim(puntoemision)='001' AND Secuencial Is Not Null AND IsNumeric(Trim(Secuencial)) GROUP BY Trim(Secuencial) ORDER BY CLng(Trim(Secuencial)) DESC"
         )) {
             try {
                 $command = $connection.CreateCommand()

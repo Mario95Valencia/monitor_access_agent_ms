@@ -66,6 +66,8 @@ public sealed class AccessNotaReader : IAccessNotaReader
             TiposDocumentoElectronico.GuiaRemision => ConsultarGuiasAsync(
                 accessPath, accessPassword, guiaNumeroCampo, guiaFechaCampo,
                 puntos, cancellationToken),
+            TiposDocumentoElectronico.Retencion => ConsultarRetencionesAsync(
+                accessPath, accessPassword, puntos, cancellationToken),
             _ => throw new InvalidOperationException(
                 $"El lector del tipo documental {tipoDocumento} todavía no está implementado.")
         };
@@ -95,7 +97,8 @@ public sealed class AccessNotaReader : IAccessNotaReader
                 if (errores.Length == 0 &&
                     tipoDocumento is TiposDocumentoElectronico.NotaCredito or
                         TiposDocumentoElectronico.NotaDebito or
-                        TiposDocumentoElectronico.GuiaRemision)
+                        TiposDocumentoElectronico.GuiaRemision or
+                        TiposDocumentoElectronico.Retencion)
                     return new ResultadoLecturaPunto(punto, tipoDocumento, null, null);
 
                 var error = errores.Length switch
@@ -253,6 +256,43 @@ public sealed class AccessNotaReader : IAccessNotaReader
         }
     }
 
+    private static async Task<IReadOnlyList<ResultadoLecturaPunto>> ConsultarRetencionesAsync(
+        string accessPath,
+        string accessPassword,
+        IReadOnlyCollection<PuntoOptions> puntos,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!File.Exists(accessPath))
+                throw new FileNotFoundException("No se encontró la base Access configurada.", accessPath);
+
+            await using var connection = await AbrirConexionAsync(accessPath, accessPassword, cancellationToken);
+            var resultados = new List<ResultadoLecturaPunto>(puntos.Count);
+            foreach (var punto in puntos)
+            {
+                try
+                {
+                    var documento = await ObtenerUltimaRetencionAsync(
+                        connection, punto, cancellationToken);
+                    resultados.Add(new ResultadoLecturaPunto(
+                        punto, TiposDocumentoElectronico.Retencion, documento, null));
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    resultados.Add(new ResultadoLecturaPunto(
+                        punto, TiposDocumentoElectronico.Retencion, null, exception));
+                }
+            }
+            return resultados;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return puntos.Select(punto => new ResultadoLecturaPunto(
+                punto, TiposDocumentoElectronico.Retencion, null, exception)).ToArray();
+        }
+    }
+
     private static async Task<OleDbConnection> AbrirConexionAsync(
         string accessPath,
         string accessPassword,
@@ -406,6 +446,42 @@ public sealed class AccessNotaReader : IAccessNotaReader
         }
 
         return mayor;
+    }
+
+    private static async Task<UltimaNota?> ObtenerUltimaRetencionAsync(
+        OleDbConnection connection,
+        PuntoOptions punto,
+        CancellationToken cancellationToken)
+    {
+        var establecimiento = punto.Serie[..3];
+        var puntoEmision = punto.Serie[3..];
+        const string sql = """
+            SELECT TOP 1 Trim(Secuencial), Max(Fecha)
+            FROM [CgRetenciones]
+            WHERE Trim(nestablecimiento) = ?
+              AND Trim(puntoemision) = ?
+              AND Secuencial Is Not Null
+              AND IsNumeric(Trim(Secuencial))
+            GROUP BY Trim(Secuencial)
+            ORDER BY CLng(Trim(Secuencial)) DESC
+            """;
+
+        await using var command = new OleDbCommand(sql, connection);
+        command.Parameters.Add("@establecimiento", OleDbType.VarWChar, 3).Value = establecimiento;
+        command.Parameters.Add("@puntoEmision", OleDbType.VarWChar, 3).Value = puntoEmision;
+
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        if (reader is null || !await reader.ReadAsync(cancellationToken))
+            return null;
+
+        var valorSecuencial = reader.GetString(0).Trim();
+        if (!long.TryParse(valorSecuencial, out var secuencial))
+            throw new InvalidDataException(
+                $"El secuencial de retención '{valorSecuencial}' no es numérico.");
+
+        var fecha = reader.IsDBNull(1) ? DateTime.Today : reader.GetDateTime(1);
+        var numeroDocumento = $"{punto.Serie}{secuencial:D9}";
+        return new UltimaNota(numeroDocumento, punto.Caja, secuencial, fecha);
     }
 
     private static void ValidarCamposGuia(string numeroCampo, string fechaCampo)
