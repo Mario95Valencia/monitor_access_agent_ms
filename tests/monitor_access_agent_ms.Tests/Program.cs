@@ -18,9 +18,10 @@ try
     await PruebaAmbiguedadAsync();
     await PruebaTipoIncorrectoAsync();
     await PruebaCopiaSinSobrescribirAsync();
+    await PruebaNombreRealSic3000Async();
     await PruebaContratoTomarAsync();
     await PruebaContratoResultadoAsync();
-    Console.WriteLine("OK: 6 pruebas de reenvío superadas.");
+    Console.WriteLine("OK: 7 pruebas de reenvío superadas.");
     return 0;
 }
 finally
@@ -77,6 +78,20 @@ async Task PruebaCopiaSinSobrescribirAsync()
     var segunda = await servicio.ReenviarAsync(ruta, nombre, CancellationToken.None);
     Afirmar(primera.Reenviado && !segunda.Reenviado && File.Exists(Path.Combine(origen, nombre)),
         "Debe copiar una vez, no sobrescribir y conservar el original.");
+}
+
+async Task PruebaNombreRealSic3000Async()
+{
+    Limpiar(origen);
+    const string nombre = "FACT-179188144300120040810188280.xml";
+    await File.WriteAllTextAsync(Path.Combine(origen, nombre),
+        XmlConSerie("factura", "01", "004", "081", "000188280"));
+    var solicitud = new SolicitudReenvioResponse(
+        2, "PTO-004081", 1, "01", "004081", 188280, null, null,
+        "PROCESANDO", 1, Guid.NewGuid(), DateTime.UtcNow, null);
+    var resultado = await Locator().BuscarAsync(solicitud, CancellationToken.None);
+    Afirmar(resultado.RutaArchivo is not null && resultado.NombreArchivo == nombre,
+        "Debe reconocer el formato FACT real con secuencial de siete dígitos en el nombre.");
 }
 
 async Task PruebaContratoTomarAsync()
@@ -138,6 +153,24 @@ static string Xml(string raizDocumento, string codDoc, string secuencial) => $""
         <estab>001</estab>
         <ptoEmi>001</ptoEmi>
         <secuencial>{secuencial.PadLeft(9, '0')}</secuencial>
+        <claveAcceso>1234567890123456789012345678901234567890123456789</claveAcceso>
+      </infoTributaria>
+    </{raizDocumento}>
+    """;
+
+static string XmlConSerie(
+    string raizDocumento,
+    string codDoc,
+    string establecimiento,
+    string puntoEmision,
+    string secuencial) => $"""
+    <?xml version="1.0" encoding="utf-8"?>
+    <{raizDocumento}>
+      <infoTributaria>
+        <codDoc>{codDoc}</codDoc>
+        <estab>{establecimiento}</estab>
+        <ptoEmi>{puntoEmision}</ptoEmi>
+        <secuencial>{secuencial}</secuencial>
         <claveAcceso>1234567890123456789012345678901234567890123456789</claveAcceso>
       </infoTributaria>
     </{raizDocumento}>

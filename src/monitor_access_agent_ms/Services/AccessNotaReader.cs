@@ -436,13 +436,18 @@ public sealed class AccessNotaReader : IAccessNotaReader
                 continue;
 
             var numeroDocumento = Convert.ToString(reader.GetValue(0))?.Trim();
-            if (!TryObtenerSecuencialElectronico(
-                    numeroDocumento, punto.Serie, punto.Caja, out var secuencial))
+            if (!TryObtenerSecuencialGuia(
+                    numeroDocumento, numeroCampo, punto.Serie, punto.Caja, out var secuencial))
                 continue;
 
             var fecha = reader.IsDBNull(1) ? DateTime.Today : Convert.ToDateTime(reader.GetValue(1));
             if (mayor is null || secuencial > mayor.Secuencial)
-                mayor = new UltimaNota(numeroDocumento!, punto.Caja, secuencial, fecha);
+            {
+                var numeroNormalizado = numeroCampo == "numGuia"
+                    ? $"{punto.Serie}{secuencial:D9}"
+                    : numeroDocumento!;
+                mayor = new UltimaNota(numeroNormalizado, punto.Caja, secuencial, fecha);
+            }
         }
 
         return mayor;
@@ -510,6 +515,24 @@ public sealed class AccessNotaReader : IAccessNotaReader
             return long.TryParse(digitos[6..], out secuencial);
 
         return TryObtenerSecuencial(digitos, caja, out secuencial);
+    }
+
+    internal static bool TryObtenerSecuencialGuia(
+        string? numeroDocumento,
+        string numeroCampo,
+        string serie,
+        string caja,
+        out long secuencial)
+    {
+        secuencial = 0;
+        if (string.IsNullOrWhiteSpace(numeroDocumento))
+            return false;
+
+        var digitos = new string(numeroDocumento.Where(char.IsDigit).ToArray());
+        if (numeroCampo == "numGuia" && digitos.Length is >= 1 and <= 9)
+            return long.TryParse(digitos, out secuencial);
+
+        return TryObtenerSecuencialElectronico(numeroDocumento, serie, caja, out secuencial);
     }
 
     internal static bool TryObtenerSecuencial(string? numeroDocumento, string caja, out long secuencial)

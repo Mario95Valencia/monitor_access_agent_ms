@@ -51,7 +51,11 @@ public sealed class FuenteAccessOptions
     public IReadOnlyCollection<string> TiposDocumentoEfectivos =>
         TiposDocumento.Count == 0 ? TipoPredeterminado : TiposDocumento;
     public IReadOnlyCollection<string> FallbackTiposDocumentoEfectivos =>
-        FallbackTiposDocumento.Count == 0 ? TipoPredeterminado : FallbackTiposDocumento;
+        string.IsNullOrWhiteSpace(FallbackAccessPath)
+            ? []
+            : FallbackTiposDocumento.Count == 0
+                ? TipoPredeterminado
+                : FallbackTiposDocumento;
 
     public bool Soporta(string tipoDocumento) =>
         TiposDocumentoEfectivos.Contains(tipoDocumento, StringComparer.Ordinal);
@@ -68,7 +72,8 @@ public sealed class FuenteAccessOptions
 
         return GuiaNumeroCampo is "numGuia" or "numFac" &&
                GuiaFechaCampo is "fechaEmisionDocSustento" or
-                   "fechaIniTransporte" or "fechaFinTransporte";
+                   "fechaIniTransporte" or "fechaFinTransporte" &&
+               (GuiaNumeroCampo != "numGuia" || Puntos.Count == 1);
     }
 }
 

@@ -127,9 +127,20 @@ public sealed class ArchivoXmlLocator(
                 return porClave;
         }
 
-        var identificador = solicitud.Serie + solicitud.Secuencial.ToString("D9");
-        return indice.Where(x => SoloDigitos(x.Nombre).Contains(
-            identificador, StringComparison.Ordinal)).ToArray();
+        // Los nombres reales de Sic3000 pueden usar 7 dígitos para el
+        // secuencial (aunque el XML lo conserve con 9). Ambos formatos sólo
+        // generan candidatos; la identidad definitiva siempre se valida
+        // dentro del XML.
+        var identificadores = new[]
+        {
+            solicitud.Serie + solicitud.Secuencial.ToString("D9"),
+            solicitud.Serie + solicitud.Secuencial.ToString("D7")
+        }.Distinct(StringComparer.Ordinal).ToArray();
+        return indice.Where(x =>
+        {
+            var digitos = SoloDigitos(x.Nombre);
+            return identificadores.Any(id => digitos.Contains(id, StringComparison.Ordinal));
+        }).ToArray();
     }
 
     private static async Task<IdentidadXml> LeerIdentidadAsync(

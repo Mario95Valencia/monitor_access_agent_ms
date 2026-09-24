@@ -30,6 +30,11 @@ limita a archivos `.xml` y usa esta prioridad:
 2. Clave de acceso en el nombre.
 3. Serie y secuencial en el nombre.
 
+Para los archivos reales `FACT-....xml` de Sic3000, el nombre puede guardar el
+secuencial con siete dígitos mientras el XML lo guarda con nueve. El localizador
+admite ambos formatos como candidatos y siempre confirma serie, secuencial y tipo
+dentro del XML antes de continuar.
+
 El XML candidato se abre con DTD deshabilitado y debe contener exactamente la
 clave indicada o la combinación tipo + serie + secuencial. Si existen varios
 candidatos válidos, ninguno se envía y el resultado se reporta como ambiguo.
